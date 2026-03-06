@@ -1,0 +1,7 @@
+python-telegram-bot[socks,job-queue]>=21.0
+python-dotenv==1.0.*
+pytest==7.*
+pytest-cov==4.*
+pytest-asyncio==0.21.*
+httpx>=0.24.0
+socksio

@@ -1,0 +1,200 @@
+import re
+import httpx
+import logging
+from typing import Optional
+from datetime import datetime
+from src.pipeline.core import PipelineStep
+from src.domain.models import RawMessage, Content, Note
+from src.adapters.filesystem import FilesystemWriter
+
+logger = logging.getLogger(__name__)
+
+class RawMessageToContent(PipelineStep):
+    """Transforms a RawMessage into a Content object."""
+    
+    async def process(self, data: RawMessage) -> Content:
+        text = data.text or ""
+        # Simple URL extraction (first URL found)
+        url_match = re.search(r'(https?://\S+)', text)
+        source_url = url_match.group(0) if url_match else None
+        
+        # Extract hashtags
+        tags = re.findall(r'#(\w+)', text)
+        
+        # Use first line as title if available and not a URL, else date
+        lines = text.strip().split('\n')
+        first_line = lines[0].strip() if lines else ""
+        
+        # If first line is strictly a URL, don't use it as a title; let FetchURLContent find a better one
+        if first_line and re.match(r'^https?://\S+$', first_line):
+            title = f"Note {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        else:
+            # Strip "Title: " prefix if present
+            clean_title = re.sub(r'^Title:\s*', '', first_line, flags=re.IGNORECASE).strip()
+            title = clean_title[:100] if clean_title else f"Note {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        
+        return Content(
+            source_url=source_url,
+            title=title,
+            body=text,
+            tags=tags,
+            created_at=data.date,
+            metadata={
+                "original_message_id": data.message_id,
+                "forward_from": data.forward_from
+            }
+        )
+
+class FetchURLContent(PipelineStep):
+    """Fetches the content of the source URL if present."""
+    
+    def __init__(self, proxy_url: Optional[str] = None):
+        self.proxy_url = proxy_url
+        
+    async def process(self, data: Content) -> Content:
+        # 1. Primary: Jina Reader
+        target_url = f"https://r.jina.ai/{data.source_url}"
+        logger.info(f"Attempting clean extraction via Jina Reader: {target_url}")
+        
+        headers = {
+            "User-Agent": "Discordbot/2.0; +https://discordapp.com",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, follow_redirects=True, timeout=30.0, headers=headers) as client:
+                response = await client.get(target_url)
+                response.raise_for_status()
+                
+                content_text = response.text
+                
+                # Look for "Title: " prefix which is common in Jina / some readers
+                title_match = re.search(r'^Title:\s*(.*)$', content_text, re.MULTILINE)
+                if title_match:
+                    data.title = title_match.group(1).strip()
+                    # Remove the Title line from body to avoid duplication
+                    content_text = re.sub(r'^Title:\s*.*\n?', '', content_text, flags=re.MULTILINE)
+                elif content_text.startswith("# "):
+                    first_line = content_text.split("\n", 1)[0]
+                    data.title = first_line.lstrip("# ").strip()
+                
+                data.body = content_text.strip()
+                return data
+
+        except Exception as e:
+            logger.warning(f"Jina Reader failed for {data.source_url}: {e}")
+
+        # 2. Secondary (X.com Specific): JSON API via vxtwitter
+        if any(domain in data.source_url for domain in ["x.com", "twitter.com"]):
+            match = re.search(r'status/(\d+)', data.source_url)
+            if match:
+                api_url = data.source_url.replace("x.com", "api.vxtwitter.com").replace("twitter.com", "api.vxtwitter.com")
+                logger.info(f"Attempting X.com JSON API fallback: {api_url}")
+                try:
+                    async with httpx.AsyncClient(proxy=self.proxy_url, follow_redirects=True, timeout=20.0, headers=headers) as client:
+                        response = await client.get(api_url)
+                        tweet_data = response.json()
+                        text = tweet_data.get("text", "")
+                        user = tweet_data.get("user_screen_name", "Unknown")
+                        
+                        # Create a meaningful title: "User on X: 'Snippet...'"
+                        clean_text = text.replace("\n", " ").strip()
+                        snippet = clean_text[:50] + "..." if len(clean_text) > 50 else clean_text
+                        data.title = f"{user} on X: \"{snippet}\""
+                        
+                        data.metadata["author"] = user
+                        data.body = text
+                        return data
+                except Exception as e:
+                    logger.warning(f"X.com JSON API failed: {e}")
+
+        # 3. Last Resort: Direct Fetch with Meta-tag Extraction
+        logger.info(f"Attempting direct fetch fallback: {data.source_url}")
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, follow_redirects=True, timeout=15.0, headers=headers) as client:
+                response = await client.get(data.source_url)
+                response.raise_for_status()
+                content_text = response.text
+                
+                if data.title.startswith("Note "):
+                    title_match = re.search(r'<title>(.*?)</title>', content_text, re.IGNORECASE | re.DOTALL)
+                    if title_match:
+                        data.title = title_match.group(1).strip()
+                
+                desc_match = re.search(r'<meta (?:property|name)="og:description" content="(.*?)"', content_text, re.IGNORECASE)
+                if not desc_match:
+                    desc_match = re.search(r'<meta (?:property|name)="twitter:description" content="(.*?)"', content_text, re.IGNORECASE)
+                
+                if desc_match:
+                    data.body = desc_match.group(1).strip()
+                    data.metadata["description"] = data.body
+                else:
+                    data.body = "Failed to extract clean text. Raw HTML returned."
+        except Exception as e:
+            logger.error(f"All fetch attempts failed for {data.source_url}: {e}")
+            data.body = f"Error fetching URL content: {str(e)}"
+            
+        return data
+
+class ContentToNote(PipelineStep):
+    """Transforms Content into a Note object (Obsidian Clipper Format)."""
+    
+    async def process(self, data: Content) -> Note:
+        # 1. Generate YAML Frontmatter
+        frontmatter = []
+        frontmatter.append("---")
+        frontmatter.append(f"title: \"{data.title.replace('\"', '\\\"')}\"")
+        if data.source_url:
+            frontmatter.append(f"source: {data.source_url}")
+        
+        frontmatter.append(f"created: {data.created_at.strftime('%Y-%m-%dT%H:%M:%S')}")
+        
+        # Add tags as a YAML list
+        if data.tags:
+            frontmatter.append("tags:")
+            for tag in data.tags:
+                frontmatter.append(f"  - {tag}")
+        
+        # Append other metadata as properties
+        for key, value in data.metadata.items():
+            if key not in ["original_message_id", "forward_from"]:
+                frontmatter.append(f"{key}: \"{str(value).replace('\"', '\\\"')}\"")
+        
+        # Internal bot metadata kept for reference
+        if data.metadata.get("forward_from"):
+            frontmatter.append(f"forwarded_from: \"{data.metadata['forward_from']}\"")
+            
+        frontmatter.append("---")
+        frontmatter.append("")
+        
+        # 2. Build Markdown Body
+        lines = frontmatter
+        lines.append(f"# {data.title}")
+        lines.append("")
+        
+        # If the body is from a cleaner (like vxtwitter), it might not have the header or source
+        # but the frontmatter already has them.
+        lines.append(data.body)
+        lines.append("")
+        
+        content_str = "\n".join(lines)
+        
+        # Truncate filename for filesystem safety
+        filename = data.title[:200] if data.title else "Untitled"
+        
+        return Note(
+            filename=filename,
+            content=content_str
+        )
+
+class SaveNote(PipelineStep):
+    """Saves the Note to the filesystem."""
+    
+    def __init__(self, writer: FilesystemWriter):
+        self.writer = writer
+        
+    async def process(self, data: Note) -> Note:
+        path = await self.writer.write_note(data)
+        data.absolute_path = path
+        return data
