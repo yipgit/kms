@@ -3,6 +3,7 @@ import httpx
 import logging
 from typing import Optional
 from datetime import datetime
+from urllib.parse import urlparse
 from src.pipeline.core import PipelineStep
 from src.domain.models import RawMessage, Content, Note
 from src.adapters.filesystem import FilesystemWriter
@@ -52,19 +53,55 @@ class FetchURLContent(PipelineStep):
     
     def __init__(self, proxy_url: Optional[str] = None):
         self.proxy_url = proxy_url
+
+    @staticmethod
+    def _x_status_id(url: str) -> Optional[str]:
+        """Return the status ID for an X/Twitter post URL, if present."""
+        hostname = (urlparse(url).hostname or "").lower()
+        if hostname not in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}:
+            return None
+
+        match = re.search(r"/(?:i/)?status/(\d+)", urlparse(url).path)
+        return match.group(1) if match else None
         
     async def process(self, data: Content) -> Content:
         if not data.source_url:
             return data
-        # 1. Primary: Jina Reader
-        target_url = f"https://r.jina.ai/{data.source_url}"
-        logger.info(f"Attempting clean extraction via Jina Reader: {target_url}")
-        
         headers = {
             "User-Agent": "Discordbot/2.0; +https://discordapp.com",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
+
+        # X often blocks readers or returns a login page.  Fetch the public JSON
+        # representation first, before accepting a nominally successful reader response.
+        status_id = self._x_status_id(data.source_url)
+        if status_id:
+            api_url = f"https://api.vxtwitter.com/i/status/{status_id}"
+            logger.info(f"Attempting X.com JSON API extraction: {api_url}")
+            try:
+                async with httpx.AsyncClient(proxy=self.proxy_url, follow_redirects=True, timeout=20.0, headers=headers) as client:
+                    response = await client.get(api_url)
+                    response.raise_for_status()
+                    tweet_data = response.json()
+                    text = (tweet_data.get("text") or "").strip()
+                    if not text:
+                        raise ValueError("X.com JSON API response did not contain post text")
+
+                    user = tweet_data.get("user_screen_name") or tweet_data.get("user_name") or "Unknown"
+                    snippet = text.replace("\n", " ")[:50].strip()
+                    if len(text.replace("\n", " ").strip()) > 50:
+                        snippet += "..."
+                    data.title = f'{user} on X: "{snippet}"'
+                    data.metadata["author"] = user
+                    data.body = text
+                    return data
+            except Exception as e:
+                logger.warning(f"X.com JSON API failed for {data.source_url}: {e}")
+
+        # 1. Primary: Jina Reader
+        target_url = f"https://r.jina.ai/{data.source_url}"
+        logger.info(f"Attempting clean extraction via Jina Reader: {target_url}")
 
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, follow_redirects=True, timeout=30.0, headers=headers) as client:
@@ -89,31 +126,7 @@ class FetchURLContent(PipelineStep):
         except Exception as e:
             logger.warning(f"Jina Reader failed for {data.source_url}: {e}")
 
-        # 2. Secondary (X.com Specific): JSON API via vxtwitter
-        if any(domain in data.source_url for domain in ["x.com", "twitter.com"]):
-            match = re.search(r'status/(\d+)', data.source_url)
-            if match:
-                api_url = data.source_url.replace("x.com", "api.vxtwitter.com").replace("twitter.com", "api.vxtwitter.com")
-                logger.info(f"Attempting X.com JSON API fallback: {api_url}")
-                try:
-                    async with httpx.AsyncClient(proxy=self.proxy_url, follow_redirects=True, timeout=20.0, headers=headers) as client:
-                        response = await client.get(api_url)
-                        tweet_data = response.json()
-                        text = tweet_data.get("text", "")
-                        user = tweet_data.get("user_screen_name", "Unknown")
-                        
-                        # Create a meaningful title: "User on X: 'Snippet...'"
-                        clean_text = text.replace("\n", " ").strip()
-                        snippet = clean_text[:50] + "..." if len(clean_text) > 50 else clean_text
-                        data.title = f"{user} on X: \"{snippet}\""
-                        
-                        data.metadata["author"] = user
-                        data.body = text
-                        return data
-                except Exception as e:
-                    logger.warning(f"X.com JSON API failed: {e}")
-
-        # 3. Last Resort: Direct Fetch with Meta-tag Extraction
+        # 2. Last Resort: Direct Fetch with Meta-tag Extraction
         logger.info(f"Attempting direct fetch fallback: {data.source_url}")
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, follow_redirects=True, timeout=15.0, headers=headers) as client:
