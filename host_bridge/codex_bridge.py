@@ -44,13 +44,14 @@ def _run_enrichment(prompt: str) -> dict:
         "read-only",
         "--ignore-user-config",
         "--ignore-rules",
-        prompt,
+        "-",
     ]
     with tempfile.TemporaryDirectory(prefix="kms-codex-") as work_dir:
         try:
             completed = subprocess.run(
                 command,
                 cwd=work_dir,
+                input=prompt,
                 capture_output=True,
                 text=True,
                 timeout=REQUEST_TIMEOUT_SECONDS,
