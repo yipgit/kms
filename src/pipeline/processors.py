@@ -1,6 +1,8 @@
 import re
 import httpx
 import logging
+import html
+import json
 from typing import Optional
 from datetime import datetime
 from urllib.parse import urlparse
@@ -63,6 +65,32 @@ class FetchURLContent(PipelineStep):
 
         match = re.search(r"/(?:i/)?status/(\d+)", urlparse(url).path)
         return match.group(1) if match else None
+
+    @staticmethod
+    def _is_xiaohongshu_url(url: str) -> bool:
+        hostname = (urlparse(url).hostname or "").lower()
+        return hostname in {
+            "xhslink.com",
+            "www.xhslink.com",
+            "xiaohongshu.com",
+            "www.xiaohongshu.com",
+        }
+
+    @staticmethod
+    def _extract_xiaohongshu_article(page: str) -> Optional[dict]:
+        """Read the public JSON-LD Article embedded in a Xiaohongshu share page."""
+        pattern = r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>'
+        for match in re.finditer(pattern, page, flags=re.IGNORECASE | re.DOTALL):
+            try:
+                article = json.loads(html.unescape(match.group(1)))
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(article, dict) or article.get("@type") != "Article":
+                continue
+            description = str(article.get("description") or "").strip()
+            if description:
+                return article
+        return None
         
     async def process(self, data: Content) -> Content:
         if not data.source_url:
@@ -72,6 +100,31 @@ class FetchURLContent(PipelineStep):
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
+
+        # Xiaohongshu publishes note details as JSON-LD in public share pages,
+        # while reader services commonly receive only the login shell.
+        if self._is_xiaohongshu_url(data.source_url):
+            logger.info(f"Attempting Xiaohongshu share-page extraction: {data.source_url}")
+            try:
+                async with httpx.AsyncClient(proxy=self.proxy_url, follow_redirects=True, timeout=30.0, headers=headers) as client:
+                    response = await client.get(data.source_url)
+                    response.raise_for_status()
+                article = self._extract_xiaohongshu_article(response.text)
+                if article:
+                    headline = str(article.get("headline") or "").strip()
+                    if headline and data.title.startswith("Note "):
+                        data.title = re.sub(r"\s*-\s*小红书$", "", headline).strip()
+                    author = article.get("author")
+                    if isinstance(author, dict) and author.get("name"):
+                        data.metadata["author"] = str(author["name"])
+                    images = article.get("image")
+                    if isinstance(images, list):
+                        data.metadata["image_count"] = len(images)
+                    data.body = str(article["description"]).strip()
+                    return data
+                logger.warning(f"Xiaohongshu share page did not contain a usable JSON-LD article: {data.source_url}")
+            except Exception as e:
+                logger.warning(f"Xiaohongshu share-page extraction failed for {data.source_url}: {e}")
 
         # X often blocks readers or returns a login page.  Fetch the public JSON
         # representation first, before accepting a nominally successful reader response.

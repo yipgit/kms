@@ -116,7 +116,30 @@ class TestProcessors(unittest.IsolatedAsyncioTestCase):
                 "https://api.vxtwitter.com/i/status/123",
             )
             self.assertEqual(result.title, "testuser on X: \"Tweet content here\"")
-            self.assertIn("Tweet content here", result.body)
+        self.assertIn("Tweet content here", result.body)
+
+    async def test_fetch_xiaohongshu_share_page_before_jina(self):
+        page = '''
+        <html><script type="application/ld+json">
+        {"@type":"Article","headline":"A travel guide - 小红书","description":"Useful public note text","author":{"name":"Note author"},"image":["one","two"]}
+        </script></html>
+        '''
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__aenter__.return_value
+            response = MagicMock()
+            response.text = page
+            response.raise_for_status = MagicMock()
+            mock_client.get.return_value = response
+
+            result = await FetchURLContent().process(
+                Content(source_url="http://xhslink.com/o/example", title="Note 2026-07-12", body="Original")
+            )
+
+        self.assertEqual(mock_client.get.call_count, 1)
+        self.assertEqual(result.title, "A travel guide")
+        self.assertEqual(result.body, "Useful public note text")
+        self.assertEqual(result.metadata["author"], "Note author")
+        self.assertEqual(result.metadata["image_count"], 2)
 
     async def test_x_status_id_accepts_query_string_and_rejects_other_domains(self):
         processor = FetchURLContent()
