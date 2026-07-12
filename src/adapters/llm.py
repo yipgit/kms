@@ -143,6 +143,7 @@ class CodexCLIProvider(LLMProvider):
             self.command,
             "exec",
             "--ephemeral",
+            "--skip-git-repo-check",
             "--sandbox",
             "read-only",
             "--ignore-user-config",

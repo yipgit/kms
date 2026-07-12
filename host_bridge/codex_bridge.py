@@ -39,6 +39,7 @@ def _run_enrichment(prompt: str) -> dict:
         _codex_command(),
         "exec",
         "--ephemeral",
+        "--skip-git-repo-check",
         "--sandbox",
         "read-only",
         "--ignore-user-config",
