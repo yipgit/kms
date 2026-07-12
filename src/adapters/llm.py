@@ -148,17 +148,20 @@ class CodexCLIProvider(LLMProvider):
             "read-only",
             "--ignore-user-config",
             "--ignore-rules",
-            prompt,
+            "-",
         ]
         try:
             with tempfile.TemporaryDirectory(prefix="kms-codex-") as work_dir:
                 process = await asyncio.create_subprocess_exec(
                     *command,
                     cwd=work_dir,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(prompt.encode("utf-8")), timeout=self.timeout
+                )
         except FileNotFoundError as exc:
             raise LLMProviderError(
                 f"Codex CLI command was not found: {self.command}. Install Codex and sign in first."

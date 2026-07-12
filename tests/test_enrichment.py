@@ -70,6 +70,10 @@ class TestEnrichment(unittest.IsolatedAsyncioTestCase):
         self.assertIn("read-only", command)
         self.assertIn("--ignore-user-config", command)
         self.assertIn("--ignore-rules", command)
+        self.assertEqual(command[-1], "-")
+        process.communicate.assert_awaited_once()
+        sent_prompt = process.communicate.await_args.args[0].decode("utf-8")
+        self.assertIn("Source text", sent_prompt)
 
     async def test_openai_provider_requests_and_parses_strict_json_schema(self):
         response = MagicMock()
