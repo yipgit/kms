@@ -197,6 +197,12 @@ class CodexBridgeProvider(LLMProvider):
                 )
                 response.raise_for_status()
                 result = response.json()
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text.strip()[:500]
+            suffix = f": {detail}" if detail else ""
+            raise LLMProviderError(
+                f"Codex bridge returned HTTP {exc.response.status_code}{suffix}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise LLMProviderError(f"Codex bridge request failed: {exc}") from exc
 

@@ -9,9 +9,12 @@ the bridge runs a fixed, read-only `codex exec` command in a temporary folder.
 ```powershell
 cd D:\code\kms
 $env:CODEX_BRIDGE_TOKEN = "generate-a-long-random-secret"
-$env:CODEX_COMMAND = "codex.cmd"
 python host_bridge\codex_bridge.py
 ```
+
+The bridge automatically prefers `%APPDATA%\npm\codex.cmd`, where the Windows
+npm installation places Codex. Set `CODEX_COMMAND` only if you installed the
+CLI elsewhere.
 
 The bridge listens on port `8765`. Keep it on the Windows host, and do not
 publish that port through a router or public firewall rule.
