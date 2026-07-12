@@ -27,6 +27,9 @@ RUN_LOCK = threading.Lock()
 def _codex_command() -> str:
     configured = os.getenv("CODEX_COMMAND", "codex")
     if os.name == "nt" and configured == "codex":
+        npm_command = Path(os.getenv("APPDATA", "")) / "npm" / "codex.cmd"
+        if npm_command.is_file():
+            return str(npm_command)
         return shutil.which("codex.cmd") or shutil.which("codex") or configured
     return shutil.which(configured) or configured
 
@@ -98,6 +101,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError) as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
         except RuntimeError as exc:
+            print(f"Codex bridge error: {exc}", flush=True)
             self._send_json(HTTPStatus.BAD_GATEWAY, {"error": str(exc)})
 
     def log_message(self, format, *args):
