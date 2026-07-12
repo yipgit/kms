@@ -93,12 +93,9 @@ class TestProcessors(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_url_content_x_api_fallback(self):
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = mock_client_cls.return_value.__aenter__.return_value
-            
-            # 1. Jina Reader response (fail)
-            jina_response = MagicMock()
-            jina_response.raise_for_status.side_effect = Exception("Jina Down")
-            
-            # 2. X.com JSON API response (success)
+
+            # X JSON API response (success). It is tried before Jina because
+            # Jina can return an X login or block page with a 200 status.
             api_response = MagicMock()
             api_response.json.return_value = {
                 "text": "Tweet content here",
@@ -106,18 +103,29 @@ class TestProcessors(unittest.IsolatedAsyncioTestCase):
             }
             api_response.raise_for_status = MagicMock()
             
-            mock_client.get.side_effect = [jina_response, api_response]
+            mock_client.get.return_value = api_response
             
             processor = FetchURLContent()
             content = Content(source_url="https://x.com/user/status/123", title="Note", body="Original body")
             
             result = await processor.process(content)
             
-            self.assertEqual(mock_client.get.call_count, 2)
-            # Verify it called api.vxtwitter.com
-            self.assertIn("api.vxtwitter.com", mock_client.get.call_args_list[1][0][0])
+            self.assertEqual(mock_client.get.call_count, 1)
+            self.assertEqual(
+                mock_client.get.call_args[0][0],
+                "https://api.vxtwitter.com/i/status/123",
+            )
             self.assertEqual(result.title, "testuser on X: \"Tweet content here\"")
             self.assertIn("Tweet content here", result.body)
+
+    async def test_x_status_id_accepts_query_string_and_rejects_other_domains(self):
+        processor = FetchURLContent()
+
+        self.assertEqual(
+            processor._x_status_id("https://x.com/user/status/2034238263222047050?s=52"),
+            "2034238263222047050",
+        )
+        self.assertIsNone(processor._x_status_id("https://notx.com/user/status/123"))
 
     async def test_fetch_url_content_meta_fallback(self):
         with patch("httpx.AsyncClient") as mock_client_cls:
