@@ -66,6 +66,7 @@ class TestEnrichment(unittest.IsolatedAsyncioTestCase):
         command = create_process.call_args.args
         self.assertEqual(command[:2], ("codex", "exec"))
         self.assertIn("--ephemeral", command)
+        self.assertIn("--skip-git-repo-check", command)
         self.assertIn("read-only", command)
         self.assertIn("--ignore-user-config", command)
         self.assertIn("--ignore-rules", command)
