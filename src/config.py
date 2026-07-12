@@ -18,6 +18,8 @@ class Config:
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     CODEX_COMMAND = os.getenv("CODEX_COMMAND", "codex")
     CODEX_TIMEOUT_SECONDS = float(os.getenv("CODEX_TIMEOUT_SECONDS", "120"))
+    CODEX_BRIDGE_URL = os.getenv("CODEX_BRIDGE_URL")
+    CODEX_BRIDGE_TOKEN = os.getenv("CODEX_BRIDGE_TOKEN")
 
     @classmethod
     def validate(cls):
@@ -29,3 +31,8 @@ class Config:
             raise ValueError("OPENAI_API_KEY is required when LLM_ENABLED is true")
         if cls.LLM_ENABLED and cls.LLM_PROVIDER.lower() in {"codex", "codex-cli"} and not cls.CODEX_COMMAND:
             raise ValueError("CODEX_COMMAND must not be empty when using the Codex CLI provider")
+        if cls.LLM_ENABLED and cls.LLM_PROVIDER.lower() in {"codex-bridge", "codex_bridge"}:
+            if not cls.CODEX_BRIDGE_URL:
+                raise ValueError("CODEX_BRIDGE_URL is required when using the Codex bridge provider")
+            if not cls.CODEX_BRIDGE_TOKEN:
+                raise ValueError("CODEX_BRIDGE_TOKEN is required when using the Codex bridge provider")

@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.adapters.llm import CodexCLIProvider, LLMProvider, OpenAIProvider
+from src.adapters.llm import CodexBridgeProvider, CodexCLIProvider, LLMProvider, OpenAIProvider
 from src.adapters.tag_repository import TagRepository
 from src.domain.models import Content, Enrichment
 from src.pipeline.processors import ContentToNote, EnrichContent
@@ -24,6 +24,30 @@ class FakeProvider(LLMProvider):
 
 
 class TestEnrichment(unittest.IsolatedAsyncioTestCase):
+    async def test_codex_bridge_provider_sends_prompt_with_bearer_token(self):
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = {
+            "abstract": "Summary",
+            "key_points": ["Fact"],
+            "tags": ["AI"],
+            "categories": [],
+            "suggested_title": None,
+        }
+        with patch("src.adapters.llm.httpx.AsyncClient") as client_cls:
+            client = client_cls.return_value.__aenter__.return_value
+            client.post = AsyncMock(return_value=response)
+            result = await CodexBridgeProvider(
+                bridge_url="http://host.docker.internal:8765", token="bridge-secret"
+            ).enrich(Content(title="Original", body="Source text"), ["research"])
+
+        self.assertEqual(result.provider, "codex-bridge")
+        self.assertEqual(result.tags, ["ai"])
+        request = client.post.call_args
+        self.assertEqual(request.args[0], "http://host.docker.internal:8765/enrich")
+        self.assertEqual(request.kwargs["headers"], {"Authorization": "Bearer bridge-secret"})
+        self.assertIn("Source text", request.kwargs["json"]["prompt"])
+
     async def test_codex_cli_provider_uses_isolated_read_only_exec(self):
         process = MagicMock()
         process.returncode = 0
