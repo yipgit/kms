@@ -13,6 +13,7 @@ from src.adapters.filesystem import FilesystemWriter
 from src.pipeline.core import Pipeline
 from src.pipeline.processors import RawMessageToContent, FetchURLContent, ContentToNote, SaveNote
 from src.adapters.tag_repository import TagRepository
+from src.adapters.llm import create_llm_provider
 from src.domain.models import RawMessage
 
 # Configure logging
@@ -38,6 +39,23 @@ def main():
     pipeline = Pipeline()
     pipeline.add_step(RawMessageToContent())
     pipeline.add_step(FetchURLContent(Config.PROXY_URL))
+    if Config.LLM_ENABLED:
+        if Config.LLM_PROVIDER.lower() == "openai":
+            provider = create_llm_provider(
+                "openai",
+                api_key=Config.OPENAI_API_KEY,
+                model=Config.LLM_MODEL,
+                base_url=Config.OPENAI_BASE_URL,
+            )
+        elif Config.LLM_PROVIDER.lower() in {"codex", "codex-cli"}:
+            provider = create_llm_provider(
+                "codex-cli",
+                command=Config.CODEX_COMMAND,
+                timeout=Config.CODEX_TIMEOUT_SECONDS,
+            )
+        else:
+            raise ValueError(f"Unsupported LLM_PROVIDER: {Config.LLM_PROVIDER}")
+        pipeline.add_step(EnrichContent(provider, tag_repo))
     pipeline.add_step(ContentToNote())
     pipeline.add_step(SaveNote(fs_writer))
 

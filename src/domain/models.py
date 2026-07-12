@@ -23,6 +23,20 @@ class Content:
     tags: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
+    enrichment: Optional["Enrichment"] = None
+
+
+@dataclass
+class Enrichment:
+    """Structured, model-generated metadata kept separate from source content."""
+    abstract: str
+    key_points: List[str] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)
+    categories: List[str] = field(default_factory=list)
+    suggested_title: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    prompt_version: str = "enrichment-v1"
 
 @dataclass
 class Note:
