@@ -102,7 +102,9 @@ class TelegramBot:
             top_tags = self.tag_repo.get_top_tags(10)
             keyboard = self._get_note_keyboard_markup(top_tags)
             
-            sent_msg = await update.message.reply_text(f"✅ Saved: {note.filename}", reply_markup=keyboard)
+            sent_msg = await update.message.reply_text(
+                self._format_saved_message(note), reply_markup=keyboard
+            )
             
             # Store file path in chat_data context mapped by message ID
             if context.chat_data is not None:
@@ -111,6 +113,19 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             await update.message.reply_text(f"❌ Error: {str(e)}")
+
+    @staticmethod
+    def _format_saved_message(note: Note) -> str:
+        """Create a compact Telegram confirmation with optional LLM enrichment."""
+        lines = [f"✅ Saved: {note.filename}"]
+        if note.summary:
+            summary = " ".join(note.summary.split())
+            if len(summary) > 900:
+                summary = f"{summary[:897]}..."
+            lines.extend(["", f"📝 Summary: {summary}"])
+        if note.tags:
+            lines.append(f"🏷 Tags: {' '.join(f'#{tag}' for tag in note.tags)}")
+        return "\n".join(lines)
 
     def _get_tag_keyboard(self, file_path: str) -> InlineKeyboardMarkup:
         # Deprecated, logic moved to _handle_message and _get_tag_keyboard_markup

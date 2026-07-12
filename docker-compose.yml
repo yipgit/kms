@@ -4,8 +4,13 @@ services:
     container_name: kms-bot
     env_file:
       - .env
+    environment:
+      # The container must always use its mount point, not a Windows host path.
+      VAULT_PATH: /app/vault
     volumes:
-      - ./vault:/app/vault
+      - type: bind
+        source: ${HOST_VAULT_PATH:?Set HOST_VAULT_PATH in .env to your Obsidian vault folder}
+        target: /app/vault
     restart: unless-stopped
     healthcheck:
       test: [ "CMD-SHELL", "test $$(find /tmp/bot_heartbeat -mmin -2 | wc -l) -gt 0 || exit 1" ]

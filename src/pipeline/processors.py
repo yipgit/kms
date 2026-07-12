@@ -229,7 +229,9 @@ class ContentToNote(PipelineStep):
         
         return Note(
             filename=filename,
-            content=content_str
+            content=content_str,
+            summary=data.enrichment.abstract if data.enrichment else None,
+            tags=data.tags,
         )
 
 class SaveNote(PipelineStep):

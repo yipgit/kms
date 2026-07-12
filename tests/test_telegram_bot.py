@@ -60,6 +60,30 @@ class TestTelegramBot(unittest.IsolatedAsyncioTestCase):
         update.message.reply_text.assert_called_once()
         self.assertEqual(context.chat_data["msg_999"], "/path/file.md")
 
+    async def test_handle_message_shows_llm_summary_and_tags(self):
+        update = MagicMock()
+        update.effective_user.id = 123
+        update.effective_chat.id = 111
+        update.message.text = "https://example.com"
+        update.message.date = datetime.now()
+        context = MagicMock()
+        context.chat_data = {}
+        self.mock_handler.return_value = Note(
+            filename="article.md",
+            content="content",
+            absolute_path="/path/article.md",
+            summary="A useful article about knowledge management.",
+            tags=["knowledge-management", "research"],
+        )
+        update.message.reply_text = AsyncMock()
+        update.message.reply_text.return_value.message_id = 999
+
+        await self.bot._handle_message(update, context)
+
+        reply_text = update.message.reply_text.call_args.args[0]
+        self.assertIn("📝 Summary: A useful article", reply_text)
+        self.assertIn("🏷 Tags: #knowledge-management #research", reply_text)
+
     async def test_handle_message_unauthorized(self):
         update = MagicMock()
         update.effective_user.id = 999 # Not allowed

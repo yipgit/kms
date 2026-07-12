@@ -45,3 +45,5 @@ class Note:
     content: str
     path: str = ""  # Relative path within the vault
     absolute_path: Optional[str] = None # Set after writing
+    summary: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
