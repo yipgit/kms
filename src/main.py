@@ -11,7 +11,13 @@ from src.config import Config
 from src.adapters.telegram_bot import TelegramBot
 from src.adapters.filesystem import FilesystemWriter
 from src.pipeline.core import Pipeline
-from src.pipeline.processors import RawMessageToContent, FetchURLContent, ContentToNote, SaveNote
+from src.pipeline.processors import (
+    ContentToNote,
+    EnrichContent,
+    FetchURLContent,
+    RawMessageToContent,
+    SaveNote,
+)
 from src.adapters.tag_repository import TagRepository
 from src.adapters.llm import create_llm_provider
 from src.domain.models import RawMessage
