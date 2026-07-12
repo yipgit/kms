@@ -175,6 +175,37 @@ class CodexCLIProvider(LLMProvider):
             raise LLMProviderError("Codex CLI did not return valid enrichment JSON") from exc
 
 
+class CodexBridgeProvider(LLMProvider):
+    """Calls a token-protected host bridge that runs Codex outside Docker."""
+
+    def __init__(self, bridge_url: str, token: str, timeout: float = 120.0):
+        if not bridge_url:
+            raise ValueError("CODEX_BRIDGE_URL is required when using the Codex bridge provider")
+        if not token:
+            raise ValueError("CODEX_BRIDGE_TOKEN is required when using the Codex bridge provider")
+        self.bridge_url = bridge_url.rstrip("/")
+        self.token = token
+        self.timeout = timeout
+
+    async def enrich(self, content: Content, known_tags: List[str]) -> Enrichment:
+        prompt = _build_codex_prompt(content, known_tags)
+        headers = {"Authorization": f"Bearer {self.token}"}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.bridge_url}/enrich", headers=headers, json={"prompt": prompt}
+                )
+                response.raise_for_status()
+                result = response.json()
+        except httpx.HTTPError as exc:
+            raise LLMProviderError(f"Codex bridge request failed: {exc}") from exc
+
+        try:
+            return _parse_enrichment(json.dumps(result), provider="codex-bridge", model=None)
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise LLMProviderError("Codex bridge returned invalid enrichment JSON") from exc
+
+
 def _clean_strings(values: List[Any]) -> List[str]:
     return [str(value).strip() for value in values if str(value).strip()]
 
@@ -234,4 +265,6 @@ def create_llm_provider(provider: str, **kwargs: Any) -> LLMProvider:
         return OpenAIProvider(**kwargs)
     if provider.lower() in {"codex", "codex-cli"}:
         return CodexCLIProvider(**kwargs)
+    if provider.lower() in {"codex-bridge", "codex_bridge"}:
+        return CodexBridgeProvider(**kwargs)
     raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")

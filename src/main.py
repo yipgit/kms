@@ -59,6 +59,13 @@ def main():
                 command=Config.CODEX_COMMAND,
                 timeout=Config.CODEX_TIMEOUT_SECONDS,
             )
+        elif Config.LLM_PROVIDER.lower() in {"codex-bridge", "codex_bridge"}:
+            provider = create_llm_provider(
+                "codex-bridge",
+                bridge_url=Config.CODEX_BRIDGE_URL,
+                token=Config.CODEX_BRIDGE_TOKEN,
+                timeout=Config.CODEX_TIMEOUT_SECONDS,
+            )
         else:
             raise ValueError(f"Unsupported LLM_PROVIDER: {Config.LLM_PROVIDER}")
         pipeline.add_step(EnrichContent(provider, tag_repo))
