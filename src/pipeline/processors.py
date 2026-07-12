@@ -6,6 +6,8 @@ from datetime import datetime
 from src.pipeline.core import PipelineStep
 from src.domain.models import RawMessage, Content, Note
 from src.adapters.filesystem import FilesystemWriter
+from src.adapters.llm import LLMProvider
+from src.adapters.tag_repository import TagRepository
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,8 @@ class FetchURLContent(PipelineStep):
         self.proxy_url = proxy_url
         
     async def process(self, data: Content) -> Content:
+        if not data.source_url:
+            return data
         # 1. Primary: Jina Reader
         target_url = f"https://r.jina.ai/{data.source_url}"
         logger.info(f"Attempting clean extraction via Jina Reader: {target_url}")
@@ -137,6 +141,22 @@ class FetchURLContent(PipelineStep):
             
         return data
 
+
+class EnrichContent(PipelineStep):
+    """Optionally generate an abstract, tags, and key points via an LLM provider."""
+
+    def __init__(self, provider: LLMProvider, tag_repo: TagRepository):
+        self.provider = provider
+        self.tag_repo = tag_repo
+
+    async def process(self, data: Content) -> Content:
+        enrichment = await self.provider.enrich(data, self.tag_repo.get_top_tags(50))
+        data.enrichment = enrichment
+        data.tags = list(dict.fromkeys([*data.tags, *enrichment.tags]))
+        if data.title and data.title.startswith("Note ") and enrichment.suggested_title:
+            data.title = enrichment.suggested_title[:100]
+        return data
+
 class ContentToNote(PipelineStep):
     """Transforms Content into a Note object (Obsidian Clipper Format)."""
     
@@ -155,6 +175,17 @@ class ContentToNote(PipelineStep):
             frontmatter.append("tags:")
             for tag in data.tags:
                 frontmatter.append(f"  - {tag}")
+
+        if data.enrichment:
+            if data.enrichment.categories:
+                frontmatter.append("categories:")
+                for category in data.enrichment.categories:
+                    frontmatter.append(f"  - {category}")
+            if data.enrichment.provider:
+                frontmatter.append(f"llm_provider: {data.enrichment.provider}")
+            if data.enrichment.model:
+                frontmatter.append(f"llm_model: {data.enrichment.model}")
+            frontmatter.append(f"llm_prompt_version: {data.enrichment.prompt_version}")
         
         # Append other metadata as properties
         for key, value in data.metadata.items():
@@ -172,6 +203,19 @@ class ContentToNote(PipelineStep):
         lines = frontmatter
         lines.append(f"# {data.title}")
         lines.append("")
+
+        if data.enrichment:
+            lines.append("## Abstract")
+            lines.append("")
+            lines.append(data.enrichment.abstract)
+            lines.append("")
+            if data.enrichment.key_points:
+                lines.append("## Key points")
+                lines.append("")
+                lines.extend(f"- {point}" for point in data.enrichment.key_points)
+                lines.append("")
+            lines.append("## Source content")
+            lines.append("")
         
         # If the body is from a cleaner (like vxtwitter), it might not have the header or source
         # but the frontmatter already has them.
