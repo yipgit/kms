@@ -54,6 +54,7 @@ def _run_enrichment(prompt: str) -> dict:
                 input=prompt,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=REQUEST_TIMEOUT_SECONDS,
                 check=False,
             )
