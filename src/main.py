@@ -19,6 +19,7 @@ from src.pipeline.processors import (
     SaveNote,
 )
 from src.adapters.tag_repository import TagRepository
+from src.adapters.note_sink import HttpNoteSink
 from src.adapters.llm import create_llm_provider
 from src.domain.models import RawMessage
 
@@ -39,6 +40,11 @@ def main():
 
     # 2. Initialize Adapters
     fs_writer = FilesystemWriter(Config.VAULT_PATH)
+    note_sink = (
+        HttpNoteSink(Config.OBSIDIAN_HELPER_URL, Config.OBSIDIAN_HELPER_API_TOKEN)
+        if Config.OBSIDIAN_HELPER_URL
+        else fs_writer
+    )
     tag_repo = TagRepository(os.path.join(Config.VAULT_PATH, "tags.json"))
     
     # 3. Initialize Pipeline
@@ -70,7 +76,7 @@ def main():
             raise ValueError(f"Unsupported LLM_PROVIDER: {Config.LLM_PROVIDER}")
         pipeline.add_step(EnrichContent(provider, tag_repo))
     pipeline.add_step(ContentToNote())
-    pipeline.add_step(SaveNote(fs_writer))
+    pipeline.add_step(SaveNote(note_sink))
 
     # 4. Define Message Handler
     async def handle_message(msg: RawMessage):
@@ -84,6 +90,7 @@ def main():
         message_handler=handle_message,
         tag_repo=tag_repo,
         fs_writer=fs_writer,
+        storage_sink=note_sink,
         proxy_url=Config.PROXY_URL
     )
     

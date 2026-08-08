@@ -92,6 +92,21 @@ class FilesystemWriter:
                 directories.append(rel_path)
         return sorted(list(set(directories)))
 
+    async def list_folders(self) -> list[str]:
+        return self.list_vault_directories()
+
+    async def create_folder(self, folder: str) -> str:
+        target_dir = self._safe_directory(folder)
+        os.makedirs(target_dir, exist_ok=True)
+        return "/" if not folder.strip("/\\") else folder.replace("\\", "/").strip("/")
+
+    def _safe_directory(self, folder: str) -> str:
+        root = os.path.realpath(self.vault_path)
+        target = os.path.realpath(os.path.join(root, folder.replace("\\", "/").strip("/")))
+        if target != root and not target.startswith(root + os.sep):
+            raise ValueError("folder must remain inside the vault")
+        return target
+
     async def move_note(self, current_abs_path: str, new_rel_dir: str) -> str:
         """Moves a note to a new relative directory within the vault."""
         if not os.path.exists(current_abs_path):

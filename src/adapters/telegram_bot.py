@@ -16,6 +16,7 @@ class TelegramBot:
                  message_handler: Callable[[RawMessage], Awaitable[Note]],
                  tag_repo: TagRepository,
                  fs_writer: FilesystemWriter,
+                 storage_sink=None,
                  proxy_url: Optional[str] = None,
                  pid_file: str = ".bot.pid"):
         self.token = token
@@ -23,6 +24,7 @@ class TelegramBot:
         self.process_message = message_handler
         self.tag_repo = tag_repo
         self.fs_writer = fs_writer
+        self.storage_sink = storage_sink or fs_writer
         self.pid_file = pid_file
         
         builder = ApplicationBuilder().token(self.token)
@@ -75,6 +77,20 @@ class TelegramBot:
         )
 
         try:
+            pending_folder = context.chat_data.pop("awaiting_folder_for", None) if context.chat_data is not None else None
+            if pending_folder:
+                folder = (raw_msg.text or "").strip()
+                if not folder:
+                    await update.message.reply_text("Folder name cannot be empty.")
+                    return
+                await self._create_folder(folder)
+                file_path = context.chat_data.get(f"msg_{pending_folder}")
+                if file_path:
+                    moved_path = await self._move_note(file_path, folder)
+                    context.chat_data[f"msg_{pending_folder}"] = moved_path
+                await update.message.reply_text(f"Folder ready: {folder}")
+                return
+
             # Extract tags from the original message and add to repo for future use
             if raw_msg.text:
                 found_tags = re.findall(r'#(\w+)', raw_msg.text)
@@ -82,17 +98,6 @@ class TelegramBot:
                     self.tag_repo.add_tag(tag)
             
             note = await self.process_message(raw_msg)
-            
-            # Auto-move if 'target:' keyword is present
-            target_match = re.search(r'target:\s*(\S+)', raw_msg.text, re.IGNORECASE) if raw_msg.text else None
-            if target_match:
-                folder_path = target_match.group(1).strip()
-                try:
-                    new_abs_path = await self.fs_writer.move_note(note.absolute_path, folder_path)
-                    note.absolute_path = new_abs_path
-                    logger.info(f"Auto-moved note to {folder_path} based on keyword")
-                except Exception as e:
-                    logger.error(f"Failed to auto-move note: {e}")
             
             # Update tags from the note content (if any were extracted)
             # We need to re-extract them or pass them through. 
@@ -144,9 +149,14 @@ class TelegramBot:
                 await query.edit_message_text(text="❌ Session expired for this note.")
                 return
 
-            folders = self.fs_writer.list_vault_directories()
+            folders = await self._list_folders()
             keyboard = self._get_folder_keyboard_markup(folders)
             await query.edit_message_text(text=f"{query.message.text}\nSelect folder:", reply_markup=keyboard)
+
+        elif data == "cmd:create_folder":
+            msg_id = query.message.message_id
+            context.chat_data["awaiting_folder_for"] = msg_id
+            await query.edit_message_text(text=f"{query.message.text}\nSend the new folder path as your next message:")
 
         elif data.startswith("move:"):
             folder_path = data.split(":", 1)[1]
@@ -155,7 +165,7 @@ class TelegramBot:
             
             if file_path:
                 try:
-                    new_abs_path = await self.fs_writer.move_note(file_path, folder_path)
+                    new_abs_path = await self._move_note(file_path, folder_path)
                     # Update the tracked path
                     context.chat_data[f"msg_{msg_id}"] = new_abs_path
                     
@@ -228,10 +238,25 @@ class TelegramBot:
         for folder in folders[:15]: 
             label = folder if folder != "/" else "🏠 Root"
             keyboard.append([InlineKeyboardButton(label, callback_data=f"move:{folder}")])
-            
+        keyboard.append([InlineKeyboardButton("➕ Create folder", callback_data="cmd:create_folder")])
         # Add a back button
         keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="move:/")]) # Or maybe just a cancel
         return InlineKeyboardMarkup(keyboard)
+
+    async def _list_folders(self) -> list[str]:
+        if hasattr(self.storage_sink, "list_folders"):
+            return await self.storage_sink.list_folders()
+        return self.fs_writer.list_vault_directories()
+
+    async def _create_folder(self, folder: str) -> str:
+        if hasattr(self.storage_sink, "create_folder"):
+            return await self.storage_sink.create_folder(folder)
+        return await self.fs_writer.create_folder(folder)
+
+    async def _move_note(self, file_path: str, folder: str) -> str:
+        if hasattr(self.storage_sink, "move_note"):
+            return await self.storage_sink.move_note(file_path, folder)
+        return await self.fs_writer.move_note(file_path, folder)
 
     def _get_tag_keyboard_markup(self, top_tags: List[str]) -> InlineKeyboardMarkup:
         # Deprecated by _get_note_keyboard_markup

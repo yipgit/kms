@@ -12,6 +12,22 @@ $env:CODEX_BRIDGE_TOKEN = "generate-a-long-random-secret"
 python host_bridge\codex_bridge.py
 ```
 
+### Run it automatically as a background task
+
+From the project root, install the login-start task once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-codex-bridge-task.ps1
+```
+
+The task reads `CODEX_BRIDGE_TOKEN` from `.env`, starts at user logon, and retries after failures. Logs are written to `logs\codex-bridge.log`. Remove it with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\uninstall-codex-bridge-task.ps1
+```
+
+The Windows task is the recommended setup when Docker Desktop and Codex CLI run under the same Windows user. It keeps port `8765` available to Docker through `host.docker.internal`.
+
 The bridge automatically prefers `%APPDATA%\npm\codex.cmd`, where the Windows
 npm installation places Codex. Set `CODEX_COMMAND` only if you installed the
 CLI elsewhere.
@@ -35,3 +51,5 @@ Restart the bot after editing the `.env` file:
 ```powershell
 docker compose up -d --build --force-recreate
 ```
+
+For a Linux host, copy `systemd/codex-bridge.service` to `/etc/systemd/system/`, create `/etc/personal-content/codex-bridge.env` with `CODEX_BRIDGE_TOKEN`, then run `systemctl enable --now codex-bridge`.

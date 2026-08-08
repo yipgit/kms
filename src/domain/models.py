@@ -47,3 +47,4 @@ class Note:
     absolute_path: Optional[str] = None # Set after writing
     summary: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    path: str = ""

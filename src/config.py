@@ -20,6 +20,8 @@ class Config:
     CODEX_TIMEOUT_SECONDS = float(os.getenv("CODEX_TIMEOUT_SECONDS", "120"))
     CODEX_BRIDGE_URL = os.getenv("CODEX_BRIDGE_URL")
     CODEX_BRIDGE_TOKEN = os.getenv("CODEX_BRIDGE_TOKEN")
+    OBSIDIAN_HELPER_URL = os.getenv("OBSIDIAN_HELPER_URL")
+    OBSIDIAN_HELPER_API_TOKEN = os.getenv("OBSIDIAN_HELPER_API_TOKEN")
 
     @classmethod
     def validate(cls):
@@ -36,3 +38,5 @@ class Config:
                 raise ValueError("CODEX_BRIDGE_URL is required when using the Codex bridge provider")
             if not cls.CODEX_BRIDGE_TOKEN:
                 raise ValueError("CODEX_BRIDGE_TOKEN is required when using the Codex bridge provider")
+        if cls.OBSIDIAN_HELPER_URL and not cls.OBSIDIAN_HELPER_API_TOKEN:
+            raise ValueError("OBSIDIAN_HELPER_API_TOKEN is required when OBSIDIAN_HELPER_URL is set")

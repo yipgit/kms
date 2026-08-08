@@ -38,7 +38,7 @@ class RawMessageToContent(PipelineStep):
             clean_title = re.sub(r'^Title:\s*', '', first_line, flags=re.IGNORECASE).strip()
             title = clean_title[:100] if clean_title else f"Note {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         
-        return Content(
+        content = Content(
             source_url=source_url,
             title=title,
             body=text,
@@ -49,6 +49,10 @@ class RawMessageToContent(PipelineStep):
                 "forward_from": data.forward_from
             }
         )
+        target_match = re.search(r'target:\s*(.+?)(?:\s+#|$)', text, re.IGNORECASE)
+        if target_match:
+            content.metadata["target_folder"] = target_match.group(1).strip().strip("/\\")
+        return content
 
 class FetchURLContent(PipelineStep):
     """Fetches the content of the source URL if present."""
@@ -298,6 +302,7 @@ class ContentToNote(PipelineStep):
             content=content_str,
             summary=data.enrichment.abstract if data.enrichment else None,
             tags=data.tags,
+            path=str(data.metadata.get("target_folder") or ""),
         )
 
 class SaveNote(PipelineStep):
